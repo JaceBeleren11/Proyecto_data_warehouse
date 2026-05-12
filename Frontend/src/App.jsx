@@ -1,88 +1,81 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Bar, Pie, Doughnut } from 'react-chartjs-2';
+import { createClient } from '@supabase/supabase-js';
 import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend
+  Chart as ChartJS, CategoryScale, LinearScale, BarElement, ArcElement, Title, Tooltip, Legend
 } from 'chart.js';
 
-// Registrar los componentes de Chart.js
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend
-);
+ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Title, Tooltip, Legend);
+
+// --- CONFIGURACIÓN DIRECTA A SUPABASE ---
+// Reemplaza esto con tus credenciales (Usa la "anon public key")
+const SUPABASE_URL = 'https://nkwhohlsfawywoynqmui.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5rd2hvaGxzZmF3eXdveW5xbXVpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1MjgxMzksImV4cCI6MjA5NDEwNDEzOX0.Np9eBlj4anHdT4RIq5uMHzxBEUnVXt519HruOB_Grgk';
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 export default function App() {
   const [datos, setDatos] = useState([]);
   const [datosHistoricos, setDatosHistoricos] = useState([]);
-  
-  // --- ESTADOS PARA LAS NUEVAS MÉTRICAS ---
   const [metricaLogistica, setMetricaLogistica] = useState([]);
   const [metricaNegocio, setMetricaNegocio] = useState([]);
-  
   const [isLive, setIsLive] = useState(true);
 
-  // Funciones de Fetch originales...
-  const fetchData = async () => {
+  // --- CONSULTAS DIRECTAS A LA BASE DE DATOS ---
+  
+  const fetchTiempoReal = async () => {
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/datos');
-      const data = await response.json();
-      setDatos(data);
-    } catch (error) { console.error("Error fetching data:", error); }
+      const { data, error } = await supabase
+        .from('registros')
+        .select('*')
+        .order('fecha', { ascending: false })
+        .limit(150);
+      if (error) throw error;
+      if (data) setDatos(data);
+    } catch (error) { console.error("Error fetching datos:", error); }
   };
 
   const fetchHistorico = async () => {
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/historico-ordenes');
-      const data = await response.json();
-      setDatosHistoricos(data);
+      const { data, error } = await supabase
+        .from('olist_orders_dataset')
+        .select('order_id, order_status, order_purchase_timestamp')
+        .limit(500);
+      if (error) throw error;
+      if (data) setDatosHistoricos(data);
     } catch (error) { console.error("Error fetching historico:", error); }
   };
 
-  // --- FETCH PARA TUS NUEVAS MÉTRICAS ---
-  const fetchNuevasMetricas = async () => {
+  const fetchMetricas = async () => {
     try {
-      // Endpoint para el Top 5 de retrasos
-      const resLogistica = await fetch('http://127.0.0.1:8000/api/metrica-logistica'); 
-      if(resLogistica.ok) {
-        const dataLogistica = await resLogistica.json();
-        setMetricaLogistica(dataLogistica);
-      }
+      // Top 5 Logística (Consulta a la vista SQL)
+      const { data: dataLogistica, error: errLog } = await supabase
+        .from('vw_metrica_logistica')
+        .select('*');
+      if (!errLog && dataLogistica) setMetricaLogistica(dataLogistica);
 
-      // Endpoint para Ventas y Pedidos por Estado
-      const resNegocio = await fetch('http://127.0.0.1:8000/api/metrica-negocio'); 
-      if(resNegocio.ok) {
-        const dataNegocio = await resNegocio.json();
-        setMetricaNegocio(dataNegocio);
-      }
-    } catch (error) {
-      console.error("Error fetching nuevas métricas. Asegúrate de crear los endpoints en api.py", error);
-    }
+      // Negocio (Consulta a la vista SQL)
+      const { data: dataNegocio, error: errNeg } = await supabase
+        .from('vw_metrica_negocio')
+        .select('*');
+      if (!errNeg && dataNegocio) setMetricaNegocio(dataNegocio);
+    } catch (error) { console.error("Error fetching metricas:", error); }
   };
 
+  // --- EFECTOS DE TIEMPO REAL ---
   useEffect(() => {
-    fetchData(); 
+    fetchTiempoReal(); 
     fetchHistorico(); 
-    fetchNuevasMetricas(); 
+    fetchMetricas(); 
 
     let interval;
     if (isLive) {
-      interval = setInterval(fetchData, 2000); 
+      // Consulta a Supabase cada 3 segundos
+      interval = setInterval(fetchTiempoReal, 3000); 
     }
     return () => clearInterval(interval);
   }, [isLive]);
 
-  // --- CÁLCULO DE MÉTRICAS (TIEMPO REAL E HISTÓRICO) ---
+  // --- CÁLCULO DE MÉTRICAS ---
   const totalRegistros = datos.length;
   const totalTCP = datos.filter(d => d.origen === 'TCP').length;
   const totalUDP = datos.filter(d => d.origen === 'UDP').length;
@@ -108,7 +101,7 @@ export default function App() {
     return counts;
   }, [datosHistoricos]);
 
-  // --- CONFIGURACIÓN DE GRÁFICOS ORIGINALES ---
+  // --- CONFIGURACIÓN DE GRÁFICOS ---
   const barChartData = {
     labels: ['TCP (Órdenes)', 'UDP (Sensores)'],
     datasets: [{ label: 'Volumen', data: [totalTCP, totalUDP], backgroundColor: ['#3b82f6', '#10b981'], borderRadius: 6 }]
@@ -124,46 +117,15 @@ export default function App() {
     datasets: [{ data: Object.values(statusCountsHistorico), backgroundColor: ['#10b981', '#f59e0b', '#3b82f6', '#ef4444', '#8b5cf6'] }]
   };
 
-  // --- CONFIGURACIÓN DE GRÁFICOS PARA LAS NUEVAS MÉTRICAS ---
-  
-  // 1. Gráfica Logística (Barras Horizontales)
   const logisticaChartData = {
     labels: metricaLogistica.map(item => item.categoria || 'Sin Categoría'),
-    datasets: [
-      {
-        label: 'Días Promedio de Entrega',
-        data: metricaLogistica.map(item => item.dias_promedio || 0),
-        backgroundColor: 'rgba(239, 68, 68, 0.7)', // Rojo claro para indicar "retraso/tiempo"
-        borderRadius: 4,
-      }
-    ]
+    datasets: [{ label: 'Días Promedio de Entrega', data: metricaLogistica.map(item => item.dias_promedio || 0), backgroundColor: 'rgba(239, 68, 68, 0.7)', borderRadius: 4 }]
   };
 
-  const logisticaOptions = {
-    indexAxis: 'y', // ESTO HACE QUE LA GRÁFICA SEA HORIZONTAL
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: { legend: { position: 'bottom' } }
-  };
-
-  // 2. Gráfica Negocio (Ventas por Estado - Top 10 para no saturar)
-  const top10Negocio = metricaNegocio.slice(0, 10); // Tomamos solo los 10 primeros para la gráfica
+  const top10Negocio = metricaNegocio.slice(0, 10);
   const negocioChartData = {
     labels: top10Negocio.map(item => item.estado || 'N/A'),
-    datasets: [
-      {
-        label: 'Volumen de Ventas ($)',
-        data: top10Negocio.map(item => item.ventas_totales || 0),
-        backgroundColor: 'rgba(16, 185, 129, 0.7)', // Verde para dinero/ventas
-        borderRadius: 4,
-      }
-    ]
-  };
-
-  const negocioOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: { legend: { position: 'bottom' } }
+    datasets: [{ label: 'Volumen de Ventas ($)', data: top10Negocio.map(item => item.ventas_totales || 0), backgroundColor: 'rgba(16, 185, 129, 0.7)', borderRadius: 4 }]
   };
 
   // --- ESTILOS INLINE ---
@@ -190,11 +152,10 @@ export default function App() {
 
   return (
     <div style={styles.container}>
-      {/* SECCIÓN 1: INGESTA EN TIEMPO REAL */}
       <div style={styles.header}>
         <div>
           <h1 style={styles.title}>Data Warehouse Dashboard</h1>
-          <p style={styles.subtitle}>Monitorización de Ingesta y Análisis de Negocio</p>
+          <p style={styles.subtitle}>Conexión Directa a Supabase Serverless</p>
         </div>
         <button style={styles.button} onClick={() => setIsLive(!isLive)}>
           {isLive ? '⏸ Pausar Tiempo Real' : '▶ Reanudar Tiempo Real'}
@@ -202,75 +163,45 @@ export default function App() {
       </div>
 
       <div style={styles.kpiGrid}>
-        <div style={styles.card}>
-          <h3 style={styles.kpiTitle}>Total Registros Ingestados</h3>
-          <p style={styles.kpiValue}>{totalRegistros}</p>
-        </div>
-        <div style={styles.card}>
-          <h3 style={styles.kpiTitle}>Volumen TCP</h3>
-          <p style={{ ...styles.kpiValue, color: '#3b82f6' }}>{totalTCP}</p>
-        </div>
-        <div style={styles.card}>
-          <h3 style={styles.kpiTitle}>Volumen UDP</h3>
-          <p style={{ ...styles.kpiValue, color: '#10b981' }}>{totalUDP}</p>
-        </div>
+        <div style={styles.card}><h3 style={styles.kpiTitle}>Total Registros Ingestados</h3><p style={styles.kpiValue}>{totalRegistros}</p></div>
+        <div style={styles.card}><h3 style={styles.kpiTitle}>Volumen TCP</h3><p style={{ ...styles.kpiValue, color: '#3b82f6' }}>{totalTCP}</p></div>
+        <div style={styles.card}><h3 style={styles.kpiTitle}>Volumen UDP</h3><p style={{ ...styles.kpiValue, color: '#10b981' }}>{totalUDP}</p></div>
       </div>
 
       <div style={styles.chartGrid}>
         <div style={styles.card}>
-          <h2 style={styles.chartTitle}>Comparativa de Protocolos (Ingesta)</h2>
-          <div style={styles.chartWrapper}>
-            <Bar data={barChartData} options={{ maintainAspectRatio: false }} />
-          </div>
+          <h2 style={styles.chartTitle}>Comparativa de Protocolos</h2>
+          <div style={styles.chartWrapper}><Bar data={barChartData} options={{ maintainAspectRatio: false }} /></div>
         </div>
         <div style={styles.card}>
           <h2 style={styles.chartTitle}>Estados (Ingesta Reciente TCP)</h2>
-          <div style={styles.chartWrapper}>
-            <Pie data={pieChartData} options={{ maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }} />
-          </div>
+          <div style={styles.chartWrapper}><Pie data={pieChartData} options={{ maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }} /></div>
         </div>
       </div>
 
-      {/* SECCIÓN 2: MÉTRICAS DE NEGOCIO Y LOGÍSTICA (NUEVO) */}
       <h2 style={styles.sectionTitle}>Métricas Estratégicas (Data Warehouse)</h2>
       
       <div style={styles.chartGrid}>
-        {/* Métrica 1: Logística */}
         <div style={styles.card}>
           <h2 style={styles.chartTitle}>Top 5 Categorías con Mayor Retraso (Logística)</h2>
           <div style={styles.chartWrapper}>
-            {metricaLogistica.length > 0 ? (
-              <Bar data={logisticaChartData} options={logisticaOptions} />
-            ) : (
-              <p style={styles.emptyState}>Esperando datos de la API (/api/metrica-logistica)...</p>
-            )}
+            {metricaLogistica.length > 0 ? <Bar data={logisticaChartData} options={{ indexAxis: 'y', responsive: true, maintainAspectRatio: false }} /> : <p style={styles.emptyState}>Cargando vista SQL...</p>}
           </div>
         </div>
-        
-        {/* Métrica 2: Negocio (Gráfica) */}
         <div style={styles.card}>
           <h2 style={styles.chartTitle}>Volumen de Ventas por Estado (Top 10)</h2>
           <div style={styles.chartWrapper}>
-            {metricaNegocio.length > 0 ? (
-              <Bar data={negocioChartData} options={negocioOptions} />
-            ) : (
-              <p style={styles.emptyState}>Esperando datos de la API (/api/metrica-negocio)...</p>
-            )}
+            {metricaNegocio.length > 0 ? <Bar data={negocioChartData} options={{ responsive: true, maintainAspectRatio: false }} /> : <p style={styles.emptyState}>Cargando vista SQL...</p>}
           </div>
         </div>
       </div>
 
-      {/* Métrica 2: Negocio (Tabla detallada para todos los estados) */}
       <div style={{...styles.card, marginBottom: '30px'}}>
-        <h2 style={styles.chartTitle}>Detalle de Ventas y Pedidos Geográficos</h2>
+        <h2 style={styles.chartTitle}>Detalle Geográfico de Ventas</h2>
         <div style={{ ...styles.tableWrapper, maxHeight: '300px' }}>
           <table style={styles.table}>
             <thead>
-              <tr>
-                <th style={styles.th}>Estado Geográfico</th>
-                <th style={styles.th}>Número Total de Pedidos</th>
-                <th style={styles.th}>Volumen Total de Ventas ($)</th>
-              </tr>
+              <tr><th style={styles.th}>Estado</th><th style={styles.th}>Pedidos</th><th style={styles.th}>Ventas Totales ($)</th></tr>
             </thead>
             <tbody>
               {metricaNegocio.map((item, idx) => (
@@ -282,65 +213,35 @@ export default function App() {
                   </td>
                 </tr>
               ))}
-              {metricaNegocio.length === 0 && (
-                <tr>
-                  <td colSpan="3" style={styles.emptyState}>
-                    Conecta la base de datos en api.py para ver los resultados aquí.
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* SECCIÓN 3: ANÁLISIS HISTÓRICO ORIGINAL */}
       <h2 style={styles.sectionTitle}>Análisis Histórico de Órdenes (Olist Dataset)</h2>
-      
       <div style={styles.chartGrid}>
         <div style={styles.card}>
           <h2 style={styles.chartTitle}>Distribución General de Estados</h2>
-          <div style={styles.chartWrapper}>
-            <Doughnut data={doughnutChartData} options={{ maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }} />
-          </div>
+          <div style={styles.chartWrapper}><Doughnut data={doughnutChartData} options={{ maintainAspectRatio: false }} /></div>
         </div>
-        
         <div style={styles.card}>
           <h2 style={styles.chartTitle}>Tabla Histórica (Últimas 500)</h2>
           <div style={{ ...styles.tableWrapper, maxHeight: '300px' }}>
             <table style={styles.table}>
-              <thead>
-                <tr>
-                  <th style={styles.th}>ID de Orden</th>
-                  <th style={styles.th}>Estado</th>
-                  <th style={styles.th}>Fecha de Compra</th>
-                </tr>
-              </thead>
+              <thead><tr><th style={styles.th}>ID de Orden</th><th style={styles.th}>Estado</th><th style={styles.th}>Fecha</th></tr></thead>
               <tbody>
                 {datosHistoricos.map((orden, idx) => (
                   <tr key={idx}>
-                    <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: '12px' }}>
-                      {orden.order_id ? orden.order_id.substring(0, 15) + '...' : 'N/A'}
-                    </td>
-                    <td style={styles.td}>
-                      <span style={{ backgroundColor: '#f3f4f6', padding: '4px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: 'bold', textTransform: 'capitalize' }}>
-                        {orden.order_status}
-                      </span>
-                    </td>
-                    <td style={styles.td}>
-                      {orden.order_purchase_timestamp ? new Date(orden.order_purchase_timestamp).toLocaleDateString() : 'N/A'}
-                    </td>
+                    <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: '12px' }}>{orden.order_id ? orden.order_id.substring(0, 15) + '...' : 'N/A'}</td>
+                    <td style={styles.td}><span style={{ backgroundColor: '#f3f4f6', padding: '4px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: 'bold', textTransform: 'capitalize' }}>{orden.order_status}</span></td>
+                    <td style={styles.td}>{orden.order_purchase_timestamp ? new Date(orden.order_purchase_timestamp).toLocaleDateString() : 'N/A'}</td>
                   </tr>
                 ))}
-                {datosHistoricos.length === 0 && (
-                  <tr><td colSpan="3" style={styles.emptyState}>Cargando histórico desde Supabase...</td></tr>
-                )}
               </tbody>
             </table>
           </div>
         </div>
       </div>
-
     </div>
   );
 }
